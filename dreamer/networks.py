@@ -199,36 +199,64 @@ class RSSM(nn.Module):
         return dist
 
     def obs_step(self, prev_state, prev_action, embed, is_first, sample=True):
-        # initialize all prev_state
+        """执行观测步更新状态
+
+        Args:
+            prev_state: 前一步的隐状态字典，包含'deter'和'stoch'等键
+            prev_action: 前一步执行的动作张量，形状为(batch_size, num_actions)
+            embed: 当前观测的嵌入表示，形状为(batch_size, embed_size)
+            is_first: 标记序列开始的布尔张量，形状为(batch_size,)
+            sample: 是否从分布中采样，若为False则取分布众数
+
+        Returns:
+            post: 包含当前步后验状态的字典，含stoch/deter及统计量
+            prior: 包含当前步先验状态的字典，来自img_step的输出
+        """
+        
+        # 初始化全量状态：当首次观测或全部需要重置时
         if prev_state == None or torch.sum(is_first) == len(is_first):
             prev_state = self.initial(len(is_first))
             prev_action = torch.zeros((len(is_first), self._num_actions)).to(
                 self._device
             )
-        # overwrite the prev_state only where is_first=True
+        
+        # 部分重置状态：仅更新需要重置的轨迹状态
         elif torch.sum(is_first) > 0:
             is_first = is_first[:, None]
+            # 重置对应轨迹的先前动作
             prev_action *= 1.0 - is_first
             init_state = self.initial(len(is_first))
+            
+            # 对每个状态键值进行掩码更新
             for key, val in prev_state.items():
+                # 扩展掩码维度以匹配状态形状
                 is_first_r = torch.reshape(
                     is_first,
                     is_first.shape + (1,) * (len(val.shape) - len(is_first.shape)),
                 )
+                # 线性插值更新状态：保留非重置部分，替换重置部分
                 prev_state[key] = (
                     val * (1.0 - is_first_r) + init_state[key] * is_first_r
                 )
 
+        # 通过图像模型获取先验状态
         prior = self.img_step(prev_state, prev_action)
+        
+        # 拼接确定状态与嵌入特征
         x = torch.cat([prior["deter"], embed], -1)
-        # (batch_size, prior_deter + embed) -> (batch_size, hidden)
+        # 通过观测输出层生成隐藏表示
         x = self._obs_out_layers(x)
-        # (batch_size, hidden) -> (batch_size, stoch, discrete_num)
+        
+        # 获取观测分布的充分统计量
         stats = self._suff_stats_layer("obs", x)
+        
+        # 根据采样标志获取随机状态
         if sample:
             stoch = self.get_dist(stats).sample()
         else:
             stoch = self.get_dist(stats).mode()
+        
+        # 构建后验状态字典
         post = {"stoch": stoch, "deter": prior["deter"], **stats}
         return post, prior
 
@@ -524,16 +552,27 @@ class ConvEncoder(nn.Module):
     def forward(self, obs):
         obs -= 0.5
         # (batch, time, h, w, ch) -> (batch * time, h, w, ch)
-        x = obs.reshape((-1,) + tuple(obs.shape[-3:]))
+        #x = obs.reshape((-1,) + tuple(obs.shape[-3:]))
         # (batch * time, h, w, ch) -> (batch * time, ch, h, w)
-        x = x.permute(0, 3, 1, 2)
+        #x = x.permute(0, 3, 1, 2)
         # print('init encoder shape:', x.shape)
         # for layer in self.layers:
         #     x = layer(x)
         #     print(x.shape)
+        
+        # 显式获取各个维度
+        batch = obs.size(0)
+        time = obs.size(1) if len(obs.shape) == 5 else 1  # 处理有无time维度
+        h, w, ch = obs.size(-3), obs.size(-2), obs.size(-1)
+        
+        # 重塑维度为(batch*time, h, w, ch)
+        x = obs.view(batch*time, h, w, ch)        
+            
+        x = x.permute(0, 3, 1, 2).contiguous()
+        
         x = self.layers(x)
         # (batch * time, ...) -> (batch * time, -1)
-        x = x.reshape([x.shape[0], np.prod(x.shape[1:])])
+        x = x.reshape([x.shape[0], -1])
         # (batch * time, -1) -> (batch, time, -1)
         return x.reshape(list(obs.shape[:-3]) + [x.shape[-1]])
 
@@ -842,7 +881,7 @@ class GRUCell(nn.Module):
 
 
 class Conv2dSamePad(torch.nn.Conv2d):
-    def calc_same_pad(self, i, k, s, d):
+    def calc_same_pad(self, i: int, k: int, s: int, d: int) -> int:
         return max((math.ceil(i / s) - 1) * s + (k - 1) * d + 1 - i, 0)
 
     def forward(self, x):

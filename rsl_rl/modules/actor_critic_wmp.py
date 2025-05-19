@@ -220,7 +220,6 @@ class ActorCriticWMP(nn.Module):
         value = self.critic(concat_observations)
         return value
 
-
 def get_activation(act_name):
     if act_name == "elu":
         return nn.ELU()

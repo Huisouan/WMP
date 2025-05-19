@@ -1,0 +1,5 @@
+/isaacgym
+
+*.pyc
+/logs
+/

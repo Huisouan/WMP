@@ -33,14 +33,14 @@
 
 import os
 import copy
-import torch
+
 import numpy as np
 import random
 from isaacgym import gymapi
 from isaacgym import gymutil
 
 from legged_gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
-
+import torch
 def class_to_dict(obj) -> dict:
     if not  hasattr(obj,"__dict__"):
         return obj
@@ -154,14 +154,14 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
 
 def get_args():
     custom_parameters = [
-        {"name": "--task", "type": str, "default": "anymal_c_flat", "help": "Resume training or start testing from a checkpoint. Overrides config file if provided."},
+        {"name": "--task", "type": str, "default": "go2", "help": "Resume training or start testing from a checkpoint. Overrides config file if provided."},
         {"name": "--resume", "action": "store_true", "default": False,  "help": "Resume training from a checkpoint"},
         {"name": "--experiment_name", "type": str,  "help": "Name of the experiment to run or load. Overrides config file if provided."},
         {"name": "--run_name", "type": str,  "help": "Name of the run. Overrides config file if provided."},
         {"name": "--load_run", "type": str,  "help": "Name of the run to load when resume=True. If -1: will load the last run. Overrides config file if provided."},
         {"name": "--checkpoint", "type": int,  "help": "Saved model checkpoint number. If -1: will load the last checkpoint. Overrides config file if provided."},
         
-        {"name": "--headless", "action": "store_true", "default": False, "help": "Force display off at all times"},
+        {"name": "--headless", "action": "store_true", "default": True, "help": "Force display off at all times"},
         {"name": "--horovod", "action": "store_true", "default": False, "help": "Use horovod for multi-gpu training"},
         {"name": "--rl_device", "type": str, "default": "cuda:0", "help": 'Device used by the RL algorithm, (cpu, gpu, cuda:0, cuda:1 etc..)'},
         {"name": "--num_envs", "type": int, "help": "Number of environments to create. Overrides config file if provided."},
@@ -191,10 +191,47 @@ def export_policy_as_jit(actor_critic, path):
         exporter.export(path)
     else: 
         os.makedirs(path, exist_ok=True)
-        path = os.path.join(path, 'policy_1.pt')
-        model = copy.deepcopy(actor_critic.actor).to('cpu')
-        traced_script_module = torch.jit.script(model)
-        traced_script_module.save(path)
+        actor_path = os.path.join(path, 'actor.pt')
+        hist_enc_path = os.path.join(path, 'history_encoder.pt')
+        wm_feature_extractor_path = os.path.join(path, 'wm_feature_encoder.pt')
+        actor = copy.deepcopy(actor_critic.actor).to('cpu')
+        hist_enc = copy.deepcopy(actor_critic.history_encoder).to('cpu')
+        wm_feature_extractor = copy.deepcopy(actor_critic.wm_feature_encoder).to('cpu')
+        
+        traced_script_module = torch.jit.script(actor)
+        traced_script_module.save(actor_path)
+        traced_script_module = torch.jit.script(hist_enc)
+        traced_script_module.save(hist_enc_path)
+        traced_script_module = torch.jit.script(wm_feature_extractor)
+        traced_script_module.save(wm_feature_extractor_path)
+
+# 新增导出函数（建议添加至helpers.py）
+def export_world_model(world_model, path,example_obs):
+    """ 导出完整的世界模型组件 """
+    os.makedirs(path, exist_ok=True)
+    
+    exam_tocpu = {
+       "prop": torch.tensor(example_obs['prop']).to('cpu'),
+       "is_first": torch.tensor(example_obs['is_first']).to('cpu'),
+       "image": torch.tensor(example_obs['image']).to('cpu'), 
+    }
+    
+    # 导出编码器
+    encoder = copy.deepcopy(world_model.encoder).to('cpu')
+    traced_encoder = torch.jit.trace(encoder,exam_tocpu )
+    traced_encoder.save(os.path.join(path, 'encoder.pt'))
+    
+    # 导出动态模型
+    dynamics = copy.deepcopy(world_model.dynamics).to('cpu')
+    traced_dynamics = torch.jit.script(dynamics)
+    traced_dynamics.save(os.path.join(path, 'dynamics.pt'))
+    
+    # 导出特征提取器（如有）
+    if hasattr(world_model, 'feature_extractor'):
+        fe = copy.deepcopy(world_model.feature_extractor).to('cpu')
+        traced_fe = torch.jit.script(fe)
+        traced_fe.save(os.path.join(path, 'feature_extractor.pt'))
+
 
 class PolicyExporterLSTM(torch.nn.Module):
     def __init__(self, actor_critic):

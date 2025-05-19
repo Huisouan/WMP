@@ -40,11 +40,13 @@ currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentfram
 parentdir = os.path.dirname(os.path.dirname(currentdir))
 os.sys.path.insert(0, parentdir)
 
+
+
 import isaacgym
 from legged_gym.envs import *
 from legged_gym.utils import get_args, task_registry
-import torch
 
+import torch
 def train(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
 
@@ -56,7 +58,6 @@ def train(args):
     env, env_cfg = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
     ppo_runner, train_cfg = task_registry.make_wmp_runner(env=env, name=args.task, args=args, train_cfg=train_cfg)
     ppo_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, init_at_random_ep_len=True)
-
 
 if __name__ == '__main__':
     args = get_args()

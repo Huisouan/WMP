@@ -376,7 +376,7 @@ class WMPRunner:
 
             # copy the config file
             if(it == 0):
-                os.system("cp ./legged_gym/envs/a1/a1_amp_config.py " + self.log_dir + "/")
+                os.system("cp ./legged_gym/envs/go2/go2_amp_config.py " + self.log_dir + "/")
 
         self.current_learning_iteration += num_learning_iterations
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))

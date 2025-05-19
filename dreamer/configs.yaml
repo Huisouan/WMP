@@ -7,7 +7,7 @@ defaults:
   video_pred_log: false
 
   # Environment
-  task: 'a1'
+  task: 'go2'
   num_actions: 12
 
   # Model

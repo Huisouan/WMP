@@ -36,7 +36,7 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 class A1RoughCfg( LeggedRobotCfg ):
 
     class env( LeggedRobotCfg.env ):
-        num_envs = 5480
+        num_envs = 4096
         include_history_steps = None  # Number of steps of history to include.
         num_observations = 235
         num_privileged_obs = 235

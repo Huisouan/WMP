@@ -106,7 +106,7 @@ class LeggedRobot(BaseTask):
         self.height_samples = None
         # for debug
         self.debug_viz = True
-        self.lookat_id = 8
+        self.lookat_id = 0
         self.init_done = False
         self._parse_cfg(self.cfg)
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
@@ -286,6 +286,7 @@ class LeggedRobot(BaseTask):
         self.check_termination()
         self.compute_reward()
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
+        
         terminal_amp_states = self.get_amp_observations()[env_ids]
         self.reset_idx(env_ids)
 
@@ -660,8 +661,20 @@ class LeggedRobot(BaseTask):
             self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
 
 
-        #resample commands for rough flat terrain
-        flat_env_ids = env_ids[torch.where(env_ids >= self.roughflat_start_idx)]
+        # 原代码
+        # flat_env_ids = env_ids[torch.where(env_ids >= self.roughflat_start_idx)]
+
+        # 修改后
+        # 定义各目标地形的索引范围
+        slope_mask = (env_ids >= self.slope_start_idx) & (env_ids < self.slope_end_idx)
+        discrete_mask = (env_ids >= self.discrete_start_idx) & (env_ids < self.discrete_end_idx)
+        roughflat_mask = (env_ids >= self.roughflat_start_idx)
+
+        # 合并所有目标地形的掩码
+        combined_mask = slope_mask | discrete_mask | roughflat_mask
+
+        # 等价于筛选出所有属于上述地形的 env_ids
+        flat_env_ids = env_ids[combined_mask]
         if(len(flat_env_ids) > 0):
             self.commands[flat_env_ids, 0] = torch_rand_float(self.command_ranges["flat_lin_vel_x"][0],
                                                          self.command_ranges["flat_lin_vel_x"][1], (len(flat_env_ids), 1),
