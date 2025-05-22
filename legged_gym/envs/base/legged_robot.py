@@ -170,7 +170,6 @@ class LeggedRobot(BaseTask):
                 rng = self.cfg.domain_rand.motor_strength_range
                 self.torques = self.torques * torch_rand_float(rng[0], rng[1], self.torques.shape, device=self.device)
 
-
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
             self.gym.simulate(self.sim)
             # if self.device == 'cpu':
@@ -220,8 +219,8 @@ class LeggedRobot(BaseTask):
         return depth_image[:-2, 4:-4]
 
     def update_depth_buffer(self):
-        if not self.cfg.depth.use_camera:
-            return
+        # if not self.cfg.depth.use_camera:
+        return
 
         if self.global_counter % self.cfg.depth.update_interval != 0:
             return
@@ -466,6 +465,8 @@ class LeggedRobot(BaseTask):
             contact_flag = torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1
             self.privileged_obs_buf = torch.cat((contact_flag, self.privileged_obs_buf), dim=-1)
 
+            self.privileged_obs_buf = torch.cat((self.privileged_obs_buf,self.get_forward_map()), dim=-1)
+        
         # add noise if needed
         if self.add_noise:
             self.privileged_obs_buf += (2 * torch.rand_like(self.privileged_obs_buf) - 1) * self.noise_scale_vec
@@ -643,7 +644,13 @@ class LeggedRobot(BaseTask):
 
         if self.cfg.terrain.measure_heights:
             self.measured_heights = self._get_heights()
-            self.measured_forward_heights = self._get_forward_heights()
+            if self.cfg.domain_rand.forward_height_randomization:
+                self.measured_forward_heights = self._get_forward_heights_with_noise(
+                    noise_range=self.cfg.domain_rand.forward_height_range,
+                )
+            else:
+                self.measured_forward_heights = self._get_forward_heights()
+            
         if self.cfg.domain_rand.push_robots and  (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
             self._push_robots()
 
@@ -1456,6 +1463,28 @@ class LeggedRobot(BaseTask):
         heights = torch.min(heights, heights3)
 
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
+
+    def _get_forward_heights_with_noise(self, noise_range=(-0.05, 0.05), env_ids=None):
+        """
+        在_get_forward_heights的基础上添加随机噪声。
+        
+        Args:
+            noise_range (tuple): 噪声的范围，例如 (-0.05, 0.05) 表示噪声值在 -0.05 到 0.05 之间。
+            env_ids (List[int], optional): Subset of environments for which to return the heights. Defaults to None.
+
+        Returns:
+            torch.Tensor: 添加噪声后的高度测量值。
+        """
+        # 调用原始方法获取高度
+        heights = self._get_forward_heights(env_ids)
+        
+        # 生成与高度数据相同形状的随机噪声
+        noise = torch.rand_like(heights,device=self.device) * (noise_range[1] - noise_range[0]) + noise_range[0]
+        
+        # 添加噪声并返回结果
+        noisy_heights = heights + noise
+        
+        return noisy_heights
 
     def get_forward_map(self):
         return torch.clip(self.root_states[:, 2].unsqueeze(1) - self.cfg.normalization.base_height - self.measured_forward_heights, -1,

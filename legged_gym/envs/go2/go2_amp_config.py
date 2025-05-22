@@ -44,14 +44,15 @@ class GO2AMPCfg(LeggedRobotCfg):
         include_history_steps = None  # Number of steps of history to include.
         prop_dim = 33 # proprioception
         action_dim = 12
-        privileged_dim = 24 + 26 + 3  # privileged_obs[:,:privileged_dim] is the privileged information in privileged_obs, include 3-dim base linear vel
+        privileged_dim = 24 + 26 + 3 + 2  # privileged_obs[:,:privileged_dim] is the privileged information in privileged_obs, include 3-dim base linear vel
         height_dim = 187  # privileged_obs[:,-height_dim:] is the heightmap in privileged_obs
-        forward_height_dim = 525 # for depth image prediction
-        num_observations = prop_dim + privileged_dim + height_dim + action_dim
-        num_privileged_obs = prop_dim + privileged_dim + height_dim + action_dim
+        forward_height_dim = 180 # for depth image prediction
+        num_observations = prop_dim + privileged_dim + height_dim + action_dim + forward_height_dim
+        num_privileged_obs = prop_dim + privileged_dim + height_dim + action_dim + forward_height_dim
         reference_state_initialization = False
         reference_state_initialization_prob = 0.85
         amp_motion_files = MOTION_FILES
+        use_front_lidar= True
 
     class terrain:
         mesh_type = 'trimesh'  # "heightfield" # none, plane, heightfield or trimesh
@@ -69,11 +70,10 @@ class GO2AMPCfg(LeggedRobotCfg):
         measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
 
         # 525 dim, for depth image prediction
-        measured_forward_points_x = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
-                                     1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
-                                     2.0]  # 1mx1.6m rectangle (without center line)
-        measured_forward_points_y = [-1.2, -1.1, -1.0, -0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0.,
-                                     0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2]
+        measured_forward_points_x = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
+                                     1.1, 1.2, 1.3, 1.4]  # 1mx1.6m rectangle (without center line)
+        measured_forward_points_y = [-0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0.,
+                                      0.1,  0.2,  0.3,  0.4,  0.5,  0.6,  0.7,]
 
 
         selected = False  # select a unique terrain type and pass all arguments
@@ -137,7 +137,7 @@ class GO2AMPCfg(LeggedRobotCfg):
         decimation = 4
 
     class depth:
-        use_camera = True
+        use_camera = False
         camera_num_envs = 1024
         camera_terrain_num_rows = 10
         camera_terrain_num_cols = 20
@@ -164,7 +164,7 @@ class GO2AMPCfg(LeggedRobotCfg):
     class asset(LeggedRobotCfg.asset):
         file = '{LEGGED_GYM_ROOT_DIR}/resources/robots/go2/urdf/go2.urdf'
         foot_name = "foot"
-        penalize_contacts_on = ["thigh", "calf"]
+        penalize_contacts_on = ["thigh", "calf","Head_lower", "Head_upper"]
         # terminate_after_contacts_on = [
         #     "base", "FL_calf", "FR_calf", "RL_calf", "RR_calf",
         #     "FL_thigh", "FR_thigh", "RL_thigh", "RR_thigh"]
@@ -199,6 +199,8 @@ class GO2AMPCfg(LeggedRobotCfg):
         motor_strength_range = [0.8, 1.2]
         randomize_action_latency = True
         latency_range = [0.00, 0.005]
+        forward_height_randomization = True
+        forward_height_range = [-0.1, 0.1]  # [m]
 
     class normalization:
         class obs_scales:
@@ -292,7 +294,7 @@ class GO2AMPCfgPPO(LeggedRobotCfgPPO):
         init_noise_std = 1.0
         encoder_hidden_dims = [256, 128]
         wm_encoder_hidden_dims = [64, 64]
-        actor_hidden_dims = [256, 128, 64]
+        actor_hidden_dims = [256, 128, 128]
         critic_hidden_dims = [512, 256, 128]
         latent_dim = 32 + 3
         wm_latent_dim = 32
@@ -320,7 +322,7 @@ class GO2AMPCfgPPO(LeggedRobotCfgPPO):
         amp_reward_coef = 0.5 * 0.02  # set to 0 means not use amp reward
         amp_motion_files = MOTION_FILES
         amp_num_preload_transitions = 2000000
-        amp_task_reward_lerp = 1
+        amp_task_reward_lerp = 0.3
         amp_discr_hidden_dims = [1024, 512]
 
         min_normalized_std = [0.05, 0.02, 0.05] * 4

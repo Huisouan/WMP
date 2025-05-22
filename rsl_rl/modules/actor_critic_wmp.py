@@ -46,6 +46,7 @@ class ActorCriticWMP(nn.Module):
                  num_critic_obs,
                  num_actions,
                  encoder_hidden_dims=[256, 128],
+                 fm_encoder_hidden_dims=[256, 128, 64],
                  wm_encoder_hidden_dims = [64, 32],
                  actor_hidden_dims=[256, 256, 256],
                  critic_hidden_dims=[256, 256, 256],
@@ -56,6 +57,7 @@ class ActorCriticWMP(nn.Module):
                  height_dim=187,
                  privileged_dim=3 + 24,
                  history_dim = 42*5,
+                 scan_dim = 180,
                  wm_feature_dim = 1536,
                  wm_latent_dim=16,
                  **kwargs):
@@ -69,10 +71,23 @@ class ActorCriticWMP(nn.Module):
         self.latent_dim = latent_dim
         self.height_dim = height_dim
         self.privileged_dim = privileged_dim
+        self.scan_dim = scan_dim
 
-        mlp_input_dim_a = latent_dim + 3 + wm_latent_dim #latent vector + command + wm_latent
-        mlp_input_dim_c = num_critic_obs + wm_latent_dim
+        mlp_input_dim_a = latent_dim + 3 + wm_latent_dim + latent_dim #latent vector + command + wm_latent + forwardmap
+        mlp_input_dim_c = num_critic_obs + wm_latent_dim 
 
+        #forward map encoder
+        fm_encoder_layers = []
+        fm_encoder_layers.append(nn.Linear(scan_dim, fm_encoder_hidden_dims[0]))
+        fm_encoder_layers.append(activation)
+        for l in range(len(fm_encoder_hidden_dims)):
+            if l == len(fm_encoder_hidden_dims) - 1:
+                fm_encoder_layers.append(nn.Linear(fm_encoder_hidden_dims[l], latent_dim))
+            else:
+                fm_encoder_layers.append(nn.Linear(fm_encoder_hidden_dims[l], fm_encoder_hidden_dims[l + 1]))
+                fm_encoder_layers.append(activation)
+        self.forward_map_encoder = nn.Sequential(*fm_encoder_layers)
+        
         # History Encoder
         encoder_layers = []
         encoder_layers.append(nn.Linear(history_dim, encoder_hidden_dims[0]))
@@ -139,7 +154,11 @@ class ActorCriticWMP(nn.Module):
 
         print(f"Actor MLP: {self.actor}")
         print(f"Critic MLP: {self.critic}")
-
+        print(f"History Encoder: {self.history_encoder}")
+        print(f"World Model Feature Encoder: {self.wm_feature_encoder}")
+        print(f"Critic World Model Feature Encoder: {self.critic_wm_feature_encoder}")
+        
+        
         # Action noise
         self.fixed_std = fixed_std
         std = init_noise_std * torch.ones(num_actions)
@@ -182,10 +201,13 @@ class ActorCriticWMP(nn.Module):
         self.distribution = Normal(mean, mean * 0. + std)
 
     def act(self, observations, history, wm_feature, **kwargs):
+        
+        forward_map = observations[:,-self.scan_dim:]
+        latent_fm = self.forward_map_encoder(forward_map)
         latent_vector = self.history_encoder(history)
         command = observations[:, self.privileged_dim + 6:self.privileged_dim + 9]
         wm_latent_vector = self.wm_feature_encoder(wm_feature)
-        concat_observations = torch.concat((latent_vector, command, wm_latent_vector),
+        concat_observations = torch.concat((latent_vector, command, wm_latent_vector,latent_fm),
                                            dim=-1)
         self.update_distribution(concat_observations)
         return self.distribution.sample()
@@ -202,11 +224,14 @@ class ActorCriticWMP(nn.Module):
     def get_actions_log_prob(self, actions):
         return self.distribution.log_prob(actions).sum(dim=-1)
 
-    def act_inference(self, observations, history, wm_feature):
+    def act_inference(self, observations, history, wm_feature, **kwargs):
+        
+        forward_map = observations[:,-self.scan_dim:]
+        latent_fm = self.forward_map_encoder(forward_map)
         latent_vector = self.history_encoder(history)
         command = observations[:, self.privileged_dim + 6:self.privileged_dim + 9]
         wm_latent_vector = self.wm_feature_encoder(wm_feature)
-        concat_observations = torch.concat((latent_vector, command, wm_latent_vector),
+        concat_observations = torch.concat((latent_vector, command, wm_latent_vector,latent_fm),
                                            dim=-1)
         actions_mean = self.actor(concat_observations)
         return actions_mean

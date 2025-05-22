@@ -51,8 +51,8 @@ import pygame
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 8)
-    env_cfg.terrain.num_cols = 20
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 32)
+    env_cfg.terrain.num_cols = 1
     env_cfg.terrain.curriculum = False
     env_cfg.noise.add_noise = False
     # env_cfg.domain_rand.randomize_friction = False
@@ -88,7 +88,7 @@ def play(args):
 
     if(args.terrain not in ['slope', 'stair', 'gap', 'climb', 'crawl', 'tilt','discrete']):
         print('terrain should be one of slope, stair, gap, climb, crawl, and tilt, set to climb as default')
-    args.terrain = 'climb'
+    args.terrain = 'discrete'
     
     env_cfg.terrain.terrain_proportions = {
         'slope': [0, 1.0, 0.0, 0, 0, 0, 0, 0, 0],
@@ -131,7 +131,6 @@ def play(args):
         print('Exported policy as jit script to: ', path)
 
 
-
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging
     joint_index = 1 # which joint is used for logging
@@ -144,9 +143,9 @@ def play(args):
 
     history_length = 5
     trajectory_history = torch.zeros(size=(env.num_envs, history_length, env.num_obs -
-                                            env.privileged_dim - env.height_dim - 3), device = env.device)
+                                            env.privileged_dim - env.height_dim -env_cfg.env.forward_height_dim - 3), device = env.device)
     obs_without_command = torch.concat((obs[:, env.privileged_dim:env.privileged_dim + 6],
-                                        obs[:, env.privileged_dim + 9:-env.height_dim]), dim=1)
+                                        obs[:, env.privileged_dim + 9:-(env.height_dim+env_cfg.env.forward_height_dim)]), dim=1)
     trajectory_history = torch.concat((trajectory_history[:, 1:], obs_without_command.unsqueeze(1)), dim=1)
 
     world_model = ppo_runner._world_model.to(env.device)
@@ -165,7 +164,8 @@ def play(args):
                                       device=world_model.device)
 
     path = os.path.join(path,'world_model')
-    export_world_model(ppo_runner._world_model, path,wm_obs)
+    
+    # export_world_model(ppo_runner._world_model, path,wm_obs)
 
 
     wm_feature = torch.zeros((env.num_envs, ppo_runner.wm_feature_dim), device=env.device)
@@ -189,7 +189,7 @@ def play(args):
     while True:  # 添加无限循环
         # 主循环：执行单个episode的多个时间步（与环境最大步长相关）
         for i in range(1000*int(env.max_episode_length) + 3):
-            
+            '''
             # 世界模型更新条件：当全局计数器达到更新间隔的整数倍时
             if (env.global_counter % wm_update_interval == 0):
                 
@@ -218,7 +218,7 @@ def play(args):
                 
                 # 重置首次标记：完成首次更新后设为False
                 wm_is_first[:] = 0
-
+            '''
             # 轨迹历史处理：将多维历史数据展平为二维（批处理维度 x 时间步特征）
             history = trajectory_history.flatten(1).to(env.device)
             
@@ -232,10 +232,10 @@ def play(args):
             z = -joystick.get_axis(3)
             
             command = torch.tensor([x,y,z], device=env.device)
-            
+            if args.terrain == 'gap' or args.terrain == 'climb' or args.terrain == 'tilt':
+                command = torch.tensor([0.6,0,0], device=env.device)
             #print(command)
-            
-            obs[:, 53 + 6:53 + 9] = command
+            obs[:, 55 + 6:55 + 9] = command
             actions = policy(
                 obs.detach(),        # 当前环境观测
                 history.detach(),    # 历史轨迹数据
@@ -289,7 +289,7 @@ def play(args):
             # 构建无命令的观测特征（用于历史记录）：
             obs_without_command = torch.concat(
                 (obs[:, env.privileged_dim:env.privileged_dim + 6],        # 本体状态
-                obs[:, env.privileged_dim + 9:-env.height_dim]),          # 传感器数据
+                obs[:, env.privileged_dim + 9:-(env.height_dim+env_cfg.env.forward_height_dim)]),          # 传感器数据
                 dim=1
             )
             

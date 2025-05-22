@@ -62,4 +62,5 @@ def train(args):
 if __name__ == '__main__':
     args = get_args()
     args.rl_device = args.sim_device
+    args.headless = True
     train(args)

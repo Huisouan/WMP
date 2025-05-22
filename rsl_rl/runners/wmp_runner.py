@@ -94,7 +94,7 @@ class WMPRunner:
         self.depth_predictor_opt = optim.Adam(self.depth_predictor.parameters(), lr=self.depth_predictor_cfg["lr"],
                                               weight_decay=self.depth_predictor_cfg["weight_decay"])
 
-        self.history_dim = history_length * (self.env.num_obs - self.env.privileged_dim - self.env.height_dim-3) #exclude command
+        self.history_dim = history_length * (self.env.num_obs - self.env.privileged_dim - self.env.height_dim -self.env.cfg.env.forward_height_dim -3) #exclude command
         actor_critic = ActorCriticWMP(num_actor_obs=num_actor_obs,
                                           num_critic_obs=num_critic_obs,
                                           num_actions=self.env.num_actions,
@@ -204,11 +204,23 @@ class WMPRunner:
         tot_iter = self.current_learning_iteration + num_learning_iterations
 
         # process trajectory history
-        self.trajectory_history = torch.zeros(size=(self.env.num_envs, self.history_length, self.env.num_obs -
-                                                    self.env.privileged_dim - self.env.height_dim - 3),
-                                              device=self.device)
-        obs_without_command = torch.concat((obs[:, self.env.privileged_dim:self.env.privileged_dim + 6],
-                                            obs[:, self.env.privileged_dim + 9:-self.env.height_dim]), dim=1)
+
+        if self.env.cfg.env.use_front_lidar:
+            obs_without_command = torch.concat((obs[:, self.env.privileged_dim:self.env.privileged_dim + 6],
+                                                obs[:, self.env.privileged_dim + 9:-(self.env.height_dim +self.env.num_forward_height_points)]), dim=1)
+            self.trajectory_history = torch.zeros(size=(self.env.num_envs, self.history_length, self.env.num_obs -
+                                                        self.env.privileged_dim - self.env.height_dim - self.env.cfg.env.forward_height_dim - 3),
+                                                device=self.device)
+
+        else: 
+            self.trajectory_history = torch.zeros(size=(self.env.num_envs, self.history_length, self.env.num_obs -
+                                                        self.env.privileged_dim - self.env.height_dim - 3),
+                                                device=self.device)
+
+            obs_without_command = torch.concat((obs[:, self.env.privileged_dim:self.env.privileged_dim + 6],
+                                                obs[:, self.env.privileged_dim + 9:-self.env.height_dim]), dim=1)
+
+
         self.trajectory_history = torch.concat((self.trajectory_history[:, 1:], obs_without_command.unsqueeze(1)),
                                                dim=1)
 
@@ -233,7 +245,6 @@ class WMPRunner:
 
         self.init_wm_dataset()
 
-
         for it in range(self.current_learning_iteration, tot_iter):
             if (self.env.cfg.rewards.reward_curriculum):
                 self.env.update_reward_curriculum(it)
@@ -241,6 +252,7 @@ class WMPRunner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
+                    """
                     if (self.env.global_counter % self.wm_update_interval == 0):
                         # world model obs step
                         wm_embed = self._world_model.encoder(wm_obs)
@@ -248,7 +260,7 @@ class WMPRunner:
                                                                            wm_obs["is_first"])
                         wm_feature = self._world_model.dynamics.get_deter_feat(wm_latent)
                         wm_is_first[:] = 0
-
+                    """
                     history = self.trajectory_history.flatten(1).to(self.device)
                     actions = self.alg.act(obs, critic_obs, amp_obs, history, wm_feature.to(self.env.device))
                     obs, privileged_obs, rewards, dones, infos, reset_env_ids, terminal_amp_states = self.env.step(
@@ -258,7 +270,7 @@ class WMPRunner:
                     critic_obs = privileged_obs if privileged_obs is not None else obs
                     obs, critic_obs, next_amp_obs, rewards, dones = obs.to(self.device), critic_obs.to(
                         self.device), next_amp_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
-
+                    """
                     # update world model input
                     wm_action_history = torch.concat(
                         (wm_action_history[:, 1:], actions.unsqueeze(1).to(self._world_model.device)), dim=1)
@@ -266,7 +278,7 @@ class WMPRunner:
                         "prop": obs[:, self.env.privileged_dim: self.env.privileged_dim + self.env.cfg.env.prop_dim].to(self._world_model.device),
                         "is_first": wm_is_first,
                     }
-
+                    """
                     # store the data in buffer into the dataset before reset
                     reset_env_ids = reset_env_ids.cpu().numpy()
                     if (len(reset_env_ids) > 0):
@@ -290,6 +302,7 @@ class WMPRunner:
                     wm_reward += rewards.to(self._world_model.device)
 
                     # store current step into buffer
+                    """
                     if (self.env.global_counter % self.wm_update_interval == 0):
                         if (self.env.cfg.depth.use_camera):
                             forward_heightmap = self.env.get_forward_map().to(self._world_model.device)
@@ -313,7 +326,7 @@ class WMPRunner:
                             self.wm_buffer_index[not_reset_env_ids] += 1
 
                         wm_reward[:] = 0
-
+                    """
                     # Account for terminal states.
                     next_amp_obs_with_term = torch.clone(next_amp_obs)
                     next_amp_obs_with_term[reset_env_ids] = terminal_amp_states
@@ -327,8 +340,8 @@ class WMPRunner:
                     env_ids = dones.nonzero(as_tuple=False).flatten()
                     self.trajectory_history[env_ids] = 0
                     obs_without_command = torch.concat((obs[:, self.env.privileged_dim:self.env.privileged_dim + 6],
-                                                        obs[:, self.env.privileged_dim + 9:-self.env.height_dim]),
-                                                       dim=1)
+                                                        obs[:, self.env.privileged_dim + 9:-(self.env.height_dim+self.env.cfg.env.forward_height_dim)]), dim=1)
+                                                
                     self.trajectory_history = torch.concat(
                         (self.trajectory_history[:, 1:], obs_without_command.unsqueeze(1)), dim=1)
 
@@ -358,7 +371,6 @@ class WMPRunner:
             if it % self.save_interval == 0:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
             ep_infos.clear()
-
 
             start_time = time.time()
             if (sum_wm_dataset_size > self.wm_config.train_start_steps):
@@ -417,63 +429,116 @@ class WMPRunner:
         self.wm_buffer_index = np.zeros(self.env.num_envs)
 
     def train_depth_predictor(self):
+        """
+        训练深度预测模型。
+    
+        该函数通过随机选择一批数据，使用当前深度预测模型进行预测，并计算预测结果与真实深度图像之间的均方误差（MSE）。
+        通过反向传播更新模型参数，最终返回训练过程中的平均MSE损失。
+    
+        返回值:
+            float: 训练过程中的平均MSE损失。
+        """
         total_mse_loss = 0
         for _ in range(self.depth_predictor_cfg["training_iters"]):
+            # 随机选择一批数据的索引
             batch_idx = np.random.choice(self.env.depth_index_without_crawl_tilt, self.depth_predictor_cfg["batch_size"],
                                          replace=True)
+            # 为每个选中的索引随机选择一个时间点
             time_index = [np.random.randint(0, self.wm_dataset_size[idx] + 1) for idx in batch_idx]
+            # 获取前向高度图、属性数据和深度图像
             forward_heightmap = self.wm_dataset["forward_height_map"][batch_idx, time_index]
             prop = self.wm_dataset["prop"][batch_idx, time_index]
             depth_image = self.wm_dataset["image"][self.env.depth_index_inverse[batch_idx], time_index]
-
+    
+            # 使用深度预测模型进行预测
             predict_depth_image = self.depth_predictor(forward_heightmap, prop)
+            # 计算预测深度图像与真实深度图像之间的MSE损失
             depth_predict_loss = (depth_image - predict_depth_image).pow(2).mean() * self.depth_predictor_cfg[
                 "loss_scale"]
-            # Gradient step
+            
+            # 梯度更新步骤
             self.depth_predictor_opt.zero_grad()
             depth_predict_loss.backward()
             nn.utils.clip_grad_norm_(self.depth_predictor.parameters(), 1)
             self.depth_predictor_opt.step()
+            
+            # 累加MSE损失
             total_mse_loss += depth_predict_loss.detach() / self.depth_predictor_cfg["loss_scale"]
+        
+        # 返回平均MSE损失
         return float(total_mse_loss / self.depth_predictor_cfg["training_iters"])
 
     def train_world_model(self):
-        wm_metrics = {}
-        mets = {}
+        """
+        训练世界模型（World Model）的函数。
+    
+        该函数通过从数据集中随机采样批次数据，并使用这些数据来训练世界模型。训练过程中会计算并更新模型的指标。
+    
+        返回值:
+            wm_metrics (dict): 包含训练过程中计算出的各种指标，如损失、准确率等。
+        """
+        wm_metrics = {}  # 用于存储世界模型的训练指标
+        mets = {}  # 用于临时存储每次训练的指标
+    
+        # 遍历训练步骤，每次迭代训练一次世界模型
         for i in range(self.wm_config.train_steps_per_iter):
+            # 计算每个环境的采样概率
             p = self.wm_dataset_size / np.sum(self.wm_dataset_size)
-            batch_idx = np.random.choice(range(self.env.num_envs), self.wm_config.batch_size, replace=True,
-                                         p=p)
+            
+            # 从环境中随机选择批次索引
+            batch_idx = np.random.choice(range(self.env.num_envs), self.wm_config.batch_size, replace=True, p=p)
+            
+            # 计算批次数据的长度，确保不超过最小数据集长度和配置中的批次长度
             batch_length = min(int(self.wm_dataset_size[batch_idx].min()), self.wm_config.batch_length)
-            if (batch_length <= 1):
-                continue  # an error occur about the predict loss if batch_length < 1
+            
+            # 如果批次长度小于等于1，跳过此次训练，避免预测损失计算错误
+            if batch_length <= 1:
+                continue
+    
+            # 为每个批次索引随机选择结束索引
             batch_end_idx = [np.random.randint(batch_length, self.wm_dataset_size[idx] + 1) for idx in batch_idx]
+            
+            # 初始化批次数据字典
             batch_data = {}
+            
+            # 遍历数据集中的每个键值对，构建批次数据
             for k, v in self.wm_dataset.items():
-                if (k == "forward_height_map"):
-                    continue
+                if k == "forward_height_map":
+                    continue  # 跳过前向高度图，不包含在批次数据中
+                
                 value = []
                 for idx, end_idx in zip(batch_idx, batch_end_idx):
-                    if (k == "image"):
+                    if k == "image":
+                        # 如果键为"image"，检查是否在深度索引缓冲区中
                         idx_in_buffer = np.where(self.env.depth_index == idx)[0]
-                        if (len(idx_in_buffer) == 0):
-                            # not in the buffer, use the predicted ones
-                            tmp_forward_heightmap = self.wm_dataset["forward_height_map"][idx,
-                                                    end_idx - batch_length: end_idx]
+                        if len(idx_in_buffer) == 0:
+                            # 如果不在缓冲区中，使用预测的深度图像
+                            tmp_forward_heightmap = self.wm_dataset["forward_height_map"][idx, end_idx - batch_length: end_idx]
                             tmp_prop = self.wm_dataset["prop"][idx, end_idx - batch_length: end_idx]
                             pred_depth_image = self.depth_predictor(tmp_forward_heightmap, tmp_prop)
                             value.append(pred_depth_image)
                         else:
+                            # 如果在缓冲区中，直接使用缓冲区中的图像数据
                             value.append(v[idx_in_buffer[0], end_idx - batch_length: end_idx])
                     else:
+                        # 对于其他键，直接使用数据集中的数据
                         value.append(v[idx, end_idx - batch_length: end_idx])
+                
+                # 将批次数据堆叠成张量
                 value = torch.stack(value)
                 batch_data[k] = value
+            
+            # 创建"is_first"标志，表示每个序列的第一个时间步
             is_first = torch.zeros((self.wm_config.batch_size, batch_length))
             is_first[:, 0] = 1
             batch_data["is_first"] = is_first
+            
+            # 使用批次数据训练世界模型，并获取后验、上下文和指标
             post, context, mets = self._world_model._train(batch_data)
+        
+        # 更新世界模型的指标
         wm_metrics.update(mets)
+        
         return wm_metrics
 
     def log(self, locs, width=80, pad=35):
